@@ -4,34 +4,35 @@ const pool = require('../config/db');
 const auth = require('../middleware/auth');
 
 // GET /chats  ← list all your chats
-router.get('/', auth, async (req, res) => {
-  try {
-    const result = await pool.query(
-      `SELECT 
-        c.id, c.name, c.is_group, c.created_at,
-        -- last message
-        m.content as last_message,
-        m.created_at as last_message_at,
-        -- unread count (simplified)
-        COUNT(DISTINCT cm2.user_id) as member_count
-       FROM chats c
-       JOIN chat_members cm ON cm.chat_id = c.id AND cm.user_id = $1
-       LEFT JOIN messages m ON m.id = (
-         SELECT id FROM messages 
-         WHERE chat_id = c.id AND is_deleted = FALSE
-         ORDER BY created_at DESC LIMIT 1
-       )
-       LEFT JOIN chat_members cm2 ON cm2.chat_id = c.id
-       GROUP BY c.id, m.content, m.created_at
-       ORDER BY COALESCE(m.created_at, c.created_at) DESC`,
-      [req.user.id]
-    );
-    res.json(result.rows);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
+const result = await pool.query(
+  `SELECT 
+    c.id, c.is_group, c.created_at,
+    -- for groups use chat name, for DMs use the other person's username
+    CASE 
+      WHEN c.is_group THEN c.name
+      ELSE (
+        SELECT u.username FROM users u
+        JOIN chat_members cm ON cm.user_id = u.id
+        WHERE cm.chat_id = c.id AND u.id != $1
+        LIMIT 1
+      )
+    END as name,
+    -- last message
+    m.content as last_message,
+    m.created_at as last_message_at,
+    COUNT(DISTINCT cm2.user_id) as member_count
+   FROM chats c
+   JOIN chat_members cm ON cm.chat_id = c.id AND cm.user_id = $1
+   LEFT JOIN messages m ON m.id = (
+     SELECT id FROM messages 
+     WHERE chat_id = c.id AND is_deleted = FALSE
+     ORDER BY created_at DESC LIMIT 1
+   )
+   LEFT JOIN chat_members cm2 ON cm2.chat_id = c.id
+   GROUP BY c.id, c.name, c.is_group, c.created_at, m.content, m.created_at
+   ORDER BY COALESCE(m.created_at, c.created_at) DESC`,
+  [req.user.id]
+);
 
 // POST /chats/dm  ← start a DM with someone
 // Body: { userId }

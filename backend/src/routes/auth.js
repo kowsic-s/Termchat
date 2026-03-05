@@ -56,7 +56,7 @@ router.post('/send-otp', async (req, res) => {
     res.json({
       message: 'OTP sent successfully',
       // Remove the line below in production!
-      dev_otp: process.env.NODE_ENV === 'development' ? otp : undefined
+      dev_otp: otp
     });
   } catch (err) {
     console.error(err);
@@ -68,6 +68,7 @@ router.post('/send-otp', async (req, res) => {
 // Body: { identifier, otp, username (only on first signup) }
 router.post('/verify-otp', async (req, res) => {
   const { identifier, otp, username } = req.body;
+  console.log('verify-otp received:', { identifier, otp, username });
   if (!identifier || !otp) {
     return res.status(400).json({ error: 'identifier and otp required' });
   }
@@ -85,12 +86,6 @@ router.post('/verify-otp', async (req, res) => {
       return res.status(400).json({ error: 'Invalid or expired OTP' });
     }
 
-    // Mark OTP as used
-    await pool.query(
-      'UPDATE otp_codes SET used = TRUE WHERE id = $1',
-      [otpResult.rows[0].id]
-    );
-
     // Check if user exists
     const field = identifier.includes('@') ? 'email' : 'phone';
     let userResult = await pool.query(
@@ -98,13 +93,21 @@ router.post('/verify-otp', async (req, res) => {
       [identifier]
     );
 
+    // Mark OTP as used only when login or signup is complete
+    if (userResult.rows.length > 0 || username) {
+      await pool.query(
+        'UPDATE otp_codes SET used = TRUE WHERE id = $1',
+        [otpResult.rows[0].id]
+      );
+    }
+
     let user;
     let isNewUser = false;
 
     if (userResult.rows.length === 0) {
       // New user - username required
       if (!username) {
-        return res.status(400).json({ 
+        return res.status(200).json({ 
           error: 'New user - username required',
           isNewUser: true 
         });
